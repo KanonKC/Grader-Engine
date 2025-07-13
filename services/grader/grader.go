@@ -1,0 +1,52 @@
+package services_grader
+
+import (
+	services_sandbox "ModelGrader-Grader/services/sandbox"
+	"ModelGrader-Grader/types"
+)
+
+type GraderService interface {
+	GenerateOutput(code string, lang types.ProgrammingLanguage, inputFile []string) (*services_sandbox.RuntimeResult, error)
+}
+
+type graderService struct {
+	sandboxService services_sandbox.SandboxService
+}
+
+func (gs *graderService) GenerateOutput(code string, lang types.ProgrammingLanguage, inputFile []string) (*services_sandbox.RuntimeResult, error) {
+	// Step 1: Find available sandbox
+	sid := -1
+	var err error
+	for sid == -1 {
+		sid, err = gs.sandboxService.FindAvailableSandbox()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Step 2: Write source code to target sandbox
+	err = gs.sandboxService.WriteCode(sid, lang, code)
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 3: Write input files to target sandbox
+	for _, input := range inputFile {
+		err = gs.sandboxService.WriteInput(sid, input)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Step 4: Run the code
+	runtimeResult, err := gs.sandboxService.RunCode(sid, lang)
+	if err != nil {
+		return nil, err
+	}
+
+	return runtimeResult, nil
+}
+
+func New(sandboxService services_sandbox.SandboxService) GraderService {
+	return &graderService{sandboxService: sandboxService}
+}
