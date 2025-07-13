@@ -48,7 +48,7 @@ func (gc *graderController) GenerateOutput(w http.ResponseWriter, r *http.Reques
 
 	res, err := gc.graderSvc.GenerateOutput(req.Code, lang, req.Input)
 	if err != nil {
-		http.Error(w, "Failed to generate output: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 

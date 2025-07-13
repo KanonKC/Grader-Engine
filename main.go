@@ -28,7 +28,7 @@ func main() {
 	mux.HandleFunc("/output", graderCtrl.GenerateOutput)
 
 	server := http.Server{
-		Addr:    ":8001",
+		Addr:    ":8081",
 		Handler: mux,
 	}
 	err := server.ListenAndServe()

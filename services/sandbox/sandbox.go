@@ -6,12 +6,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/google/uuid"
 )
 
 type SandboxService interface {
-	Init()
+	Init() error
 	FindAvailableSandbox() (int, error)
 	ReleaseSandbox(id int) error
 	MakeBusy(id int) error
@@ -26,12 +27,16 @@ type sandboxService struct {
 	statusArray []types.StatusArray
 }
 
-func (s *sandboxService) Init() {
+func (s *sandboxService) Init() error {
 	s.statusArray = make([]types.StatusArray, s.size)
 	for i := range s.statusArray {
 		s.statusArray[i] = types.Available
-		os.MkdirAll(fmt.Sprintf("./tmp/sandbox/%d", i), 0755)
+		err := os.MkdirAll(fmt.Sprintf("./tmp/sandbox/%d", i), 0755)
+		if err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 func (s *sandboxService) FindAvailableSandbox() (int, error) {
@@ -47,6 +52,12 @@ func (s *sandboxService) ReleaseSandbox(id int) error {
 	if s.statusArray[id] != types.Busy {
 		return errors.New("sandbox is not busy")
 	}
+
+	inputsDir := fmt.Sprintf("./tmp/sandbox/%d/inputs", id)
+	if err := os.RemoveAll(inputsDir); err != nil {
+		return errors.New("failed to delete inputs directory")
+	}
+
 	s.statusArray[id] = types.Available
 	return nil
 }
@@ -62,7 +73,14 @@ func (s *sandboxService) MakeBusy(id int) error {
 func (s *sandboxService) WriteInput(id int, content string) error {
 
 	filename := uuid.New().String()
-	file, err := os.Create(fmt.Sprintf("./tmp/sandbox/%d/inputs/%s", id, filename))
+	filename = strings.ReplaceAll(filename, "-", "")
+
+	inputsDir := fmt.Sprintf("./tmp/sandbox/%d/inputs", id)
+	if err := os.MkdirAll(inputsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create inputs directory: %w", err)
+	}
+
+	file, err := os.Create(fmt.Sprintf("%s/%s", inputsDir, filename))
 	if err != nil {
 		return err
 	}
@@ -113,26 +131,50 @@ func (s *sandboxService) RunCode(id int, lang types.ProgrammingLanguage) (*Runti
 }
 
 func (s *sandboxService) RunCodePython(id int) (*RuntimeResult, error) {
+	// Check if inputs directory exists
+	inputsDir := fmt.Sprintf("./tmp/sandbox/%d/inputs", id)
+	if _, err := os.Stat(inputsDir); os.IsNotExist(err) {
+		// If inputs directory doesn't exist, return empty result
+		return &RuntimeResult{
+			IsError:          false,
+			IsTimeout:        false,
+			IsMemoryExceeded: false,
+			Output:           []RuntimeOutput{},
+		}, nil
+	}
+
 	// Find all files in the sandbox directory
-	inputFiles, err := os.ReadDir(fmt.Sprintf("./tmp/sandbox/%d/inputs", id))
+	fmt.Println("inputsDir", inputsDir)
+	inputFiles, err := os.ReadDir(inputsDir)
 	if err != nil {
+		fmt.Println("Fail 4.1")
 		return nil, err
 	}
 
 	var runtimeOutputs []RuntimeOutput
 	for _, input := range inputFiles {
 		// Execute the Python file in the sandbox directory
-		cmd := exec.Command("python3", "main.py", "<", input.Name())
+		cmd := exec.Command("python3", "main.py")
 		cmd.Dir = fmt.Sprintf("./tmp/sandbox/%d", id)
 
-		output, err := cmd.CombinedOutput()
+		inputData, err := os.ReadFile(fmt.Sprintf("./tmp/sandbox/%d/inputs/"+input.Name(), id))
+		if err != nil {
+			fmt.Println("Fail 4.2")
+			return nil, err
+		}
+
+		// Set input data as stdin
+		cmd.Stdin = strings.NewReader(string(inputData))
+
+		// Get stdout only (not stderr)
+		stdout, err := cmd.Output()
 
 		runtimeOutput := &RuntimeOutput{
 			IsError:          err != nil,
 			IsTimeout:        false,
 			IsMemoryExceeded: false,
-			InputContent:     "", // TODO: read from input file
-			OutputContent:    string(output),
+			InputContent:     string(inputData), // TODO: read from input file
+			OutputContent:    string(stdout),
 			ExecutionTimeMs:  0, // TODO: measure execution time
 			MemoryUsageKB:    0, // TODO: measure memory usage
 		}
