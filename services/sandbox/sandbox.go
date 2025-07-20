@@ -7,8 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-
-	"github.com/google/uuid"
 )
 
 type SandboxService interface {
@@ -16,7 +14,7 @@ type SandboxService interface {
 	FindAvailableSandbox() (int, error)
 	ReleaseSandbox(id int) error
 	MakeBusy(id int) error
-	WriteInput(id int, content string) error
+	WriteInput(id int, content string, index int) error
 	WriteCode(id int, lang types.ProgrammingLanguage, content string) error
 	RunCode(id int, lang types.ProgrammingLanguage) (*RuntimeResult, error)
 	RunCodePython(id int) (*RuntimeResult, error)
@@ -70,10 +68,9 @@ func (s *sandboxService) MakeBusy(id int) error {
 	return nil
 }
 
-func (s *sandboxService) WriteInput(id int, content string) error {
+func (s *sandboxService) WriteInput(id int, content string, index int) error {
 
-	filename := uuid.New().String()
-	filename = strings.ReplaceAll(filename, "-", "")
+	filename := fmt.Sprintf("%d", index)
 
 	inputsDir := fmt.Sprintf("./tmp/sandbox/%d/inputs", id)
 	if err := os.MkdirAll(inputsDir, 0755); err != nil {
@@ -144,39 +141,49 @@ func (s *sandboxService) RunCodePython(id int) (*RuntimeResult, error) {
 	}
 
 	// Find all files in the sandbox directory
-	fmt.Println("inputsDir", inputsDir)
 	inputFiles, err := os.ReadDir(inputsDir)
 	if err != nil {
-		fmt.Println("Fail 4.1")
 		return nil, err
 	}
 
 	var runtimeOutputs []RuntimeOutput
-	for _, input := range inputFiles {
+	for index, input := range inputFiles {
 		// Execute the Python file in the sandbox directory
 		cmd := exec.Command("python3", "main.py")
 		cmd.Dir = fmt.Sprintf("./tmp/sandbox/%d", id)
 
 		inputData, err := os.ReadFile(fmt.Sprintf("./tmp/sandbox/%d/inputs/"+input.Name(), id))
 		if err != nil {
-			fmt.Println("Fail 4.2")
 			return nil, err
 		}
 
 		// Set input data as stdin
 		cmd.Stdin = strings.NewReader(string(inputData))
 
-		// Get stdout only (not stderr)
-		stdout, err := cmd.Output()
+		// Get combined output (stdout and stderr) to capture error messages
+		output, err := cmd.CombinedOutput()
+
+		outputContent := ""
+		errorMessage := ""
+		if err != nil {
+			split := strings.Split(string(output), "\n")
+			if len(split) > 2 {
+				errorMessage = split[len(split)-2]
+			}
+		} else {
+			outputContent = string(output)
+		}
 
 		runtimeOutput := &RuntimeOutput{
 			IsError:          err != nil,
 			IsTimeout:        false,
 			IsMemoryExceeded: false,
+			InputIndex:       index,
 			InputContent:     string(inputData), // TODO: read from input file
-			OutputContent:    string(stdout),
+			OutputContent:    outputContent,
 			ExecutionTimeMs:  0, // TODO: measure execution time
 			MemoryUsageKB:    0, // TODO: measure memory usage
+			Error:            errorMessage,
 		}
 		runtimeOutputs = append(runtimeOutputs, *runtimeOutput)
 	}

@@ -37,8 +37,8 @@ func (gs *graderService) GenerateOutput(code string, lang types.ProgrammingLangu
 	}
 
 	// Step 3: Write input files to target sandbox
-	for _, input := range inputFile {
-		err = gs.sandboxService.WriteInput(sid, input)
+	for index, input := range inputFile {
+		err = gs.sandboxService.WriteInput(sid, input, index)
 		if err != nil {
 			fmt.Println("Fail 3")
 			return nil, err
