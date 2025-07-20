@@ -2,11 +2,13 @@ package services_sandbox
 
 import (
 	"ModelGrader-Grader/types"
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 type SandboxService interface {
@@ -148,8 +150,11 @@ func (s *sandboxService) RunCodePython(id int) (*RuntimeResult, error) {
 
 	var runtimeOutputs []RuntimeOutput
 	for index, input := range inputFiles {
-		// Execute the Python file in the sandbox directory
-		cmd := exec.Command("python3", "main.py")
+		// Execute the Python file in the sandbox directory with timeout
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second) // 5 second timeout
+		defer cancel()
+
+		cmd := exec.CommandContext(ctx, "python3", "main.py")
 		cmd.Dir = fmt.Sprintf("./tmp/sandbox/%d", id)
 
 		inputData, err := os.ReadFile(fmt.Sprintf("./tmp/sandbox/%d/inputs/"+input.Name(), id))
@@ -160,15 +165,28 @@ func (s *sandboxService) RunCodePython(id int) (*RuntimeResult, error) {
 		// Set input data as stdin
 		cmd.Stdin = strings.NewReader(string(inputData))
 
+		// Measure execution time
+		startTime := time.Now()
+
 		// Get combined output (stdout and stderr) to capture error messages
 		output, err := cmd.CombinedOutput()
 
+		executionTime := time.Since(startTime)
+		executionTimeMs := int(executionTime.Milliseconds())
+
 		outputContent := ""
 		errorMessage := ""
+		isTimeout := false
+
 		if err != nil {
-			split := strings.Split(string(output), "\n")
-			if len(split) > 2 {
-				errorMessage = split[len(split)-2]
+			// Check if it's a timeout error
+			if ctx.Err() == context.DeadlineExceeded {
+				isTimeout = true
+			} else {
+				split := strings.Split(string(output), "\n")
+				if len(split) > 2 {
+					errorMessage = split[len(split)-2]
+				}
 			}
 		} else {
 			outputContent = string(output)
@@ -176,12 +194,12 @@ func (s *sandboxService) RunCodePython(id int) (*RuntimeResult, error) {
 
 		runtimeOutput := &RuntimeOutput{
 			IsError:          err != nil,
-			IsTimeout:        false,
+			IsTimeout:        isTimeout,
 			IsMemoryExceeded: false,
 			InputIndex:       index,
 			InputContent:     string(inputData), // TODO: read from input file
 			OutputContent:    outputContent,
-			ExecutionTimeMs:  0, // TODO: measure execution time
+			ExecutionTimeMs:  executionTimeMs,
 			MemoryUsageKB:    0, // TODO: measure memory usage
 			Error:            errorMessage,
 		}
