@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -149,12 +151,24 @@ func (s *sandboxService) RunCodePython(id int, timeout time.Duration) (*RuntimeR
 	}
 
 	var runtimeOutputs []RuntimeOutput
+	const memoryLimitMB = 64 // 64MB memory limit
+
 	for index, input := range inputFiles {
 		// Execute the Python file in the sandbox directory with timeout
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 
-		cmd := exec.CommandContext(ctx, "python3", "main.py")
+		// Create command with memory limit
+		var cmd *exec.Cmd
+		if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
+			// Use ulimit to set memory limit (in KB)
+			memoryLimitKB := memoryLimitMB * 1024
+			cmd = exec.CommandContext(ctx, "sh", "-c",
+				fmt.Sprintf("ulimit -v %d && python3 main.py", memoryLimitKB))
+		} else {
+			// Fallback for other systems
+			cmd = exec.CommandContext(ctx, "python3", "main.py")
+		}
 		cmd.Dir = fmt.Sprintf("./tmp/sandbox/%d", id)
 
 		inputData, err := os.ReadFile(fmt.Sprintf("./tmp/sandbox/%d/inputs/"+input.Name(), id))
@@ -168,8 +182,44 @@ func (s *sandboxService) RunCodePython(id int, timeout time.Duration) (*RuntimeR
 		// Measure execution time
 		startTime := time.Now()
 
-		// Get combined output (stdout and stderr) to capture error messages
+		// Start the command
+		if err := cmd.Start(); err != nil {
+			return nil, err
+		}
+
+		// Monitor memory usage in a goroutine
+		memoryExceeded := false
+		maxMemoryUsageKB := 0
+		done := make(chan bool)
+
+		go func() {
+			defer close(done)
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(100 * time.Millisecond): // Check every 100ms
+					if cmd.Process != nil {
+						if memUsage := getProcessMemoryUsage(cmd.Process.Pid); memUsage > 0 {
+							if memUsage > maxMemoryUsageKB {
+								maxMemoryUsageKB = memUsage
+							}
+
+							// Check if memory limit exceeded
+							if memUsage > memoryLimitMB*1024 {
+								memoryExceeded = true
+								cmd.Process.Kill()
+								return
+							}
+						}
+					}
+				}
+			}
+		}()
+
+		// Wait for command to complete
 		output, err := cmd.CombinedOutput()
+		<-done // Wait for monitoring goroutine to finish
 
 		executionTime := time.Since(startTime)
 		executionTimeMs := int(executionTime.Milliseconds())
@@ -195,12 +245,12 @@ func (s *sandboxService) RunCodePython(id int, timeout time.Duration) (*RuntimeR
 		runtimeOutput := &RuntimeOutput{
 			IsError:          err != nil,
 			IsTimeout:        isTimeout,
-			IsMemoryExceeded: false,
+			IsMemoryExceeded: memoryExceeded,
 			InputIndex:       index,
 			InputContent:     string(inputData), // TODO: read from input file
 			OutputContent:    outputContent,
 			ExecutionTimeMs:  executionTimeMs,
-			MemoryUsageKB:    0, // TODO: measure memory usage
+			MemoryUsageKB:    maxMemoryUsageKB,
 			Error:            errorMessage,
 		}
 		runtimeOutputs = append(runtimeOutputs, *runtimeOutput)
@@ -212,6 +262,46 @@ func (s *sandboxService) RunCodePython(id int, timeout time.Duration) (*RuntimeR
 		IsMemoryExceeded: false,
 		Output:           runtimeOutputs,
 	}, nil
+}
+
+// getProcessMemoryUsage returns the memory usage of a process in KB
+func getProcessMemoryUsage(pid int) int {
+	if runtime.GOOS == "linux" {
+		// Read from /proc/[pid]/status
+		data, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
+		if err != nil {
+			return 0
+		}
+
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines {
+			if strings.HasPrefix(line, "VmRSS:") {
+				fields := strings.Fields(line)
+				if len(fields) >= 2 {
+					memKB, err := strconv.Atoi(fields[1])
+					if err == nil {
+						fmt.Println("Memory usage:", memKB)
+						return memKB
+					}
+				}
+			}
+		}
+	} else if runtime.GOOS == "darwin" {
+		// Use ps command on macOS
+		cmd := exec.Command("ps", "-o", "rss=", "-p", strconv.Itoa(pid))
+		output, err := cmd.Output()
+		if err != nil {
+			return 0
+		}
+
+		memKB, err := strconv.Atoi(strings.TrimSpace(string(output)))
+		if err == nil {
+			fmt.Println("Memory usage:", memKB)
+			return memKB
+		}
+	}
+
+	return 0
 }
 
 func New(size int) SandboxService {
