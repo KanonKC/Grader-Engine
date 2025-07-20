@@ -19,7 +19,7 @@ type SandboxService interface {
 	WriteInput(id int, content string, index int) error
 	WriteCode(id int, lang types.ProgrammingLanguage, content string) error
 	RunCode(id int, lang types.ProgrammingLanguage) (*RuntimeResult, error)
-	RunCodePython(id int) (*RuntimeResult, error)
+	RunCodePython(id int, timeout time.Duration) (*RuntimeResult, error)
 }
 
 type sandboxService struct {
@@ -121,7 +121,7 @@ func (s *sandboxService) WriteCode(id int, lang types.ProgrammingLanguage, conte
 func (s *sandboxService) RunCode(id int, lang types.ProgrammingLanguage) (*RuntimeResult, error) {
 	switch lang {
 	case types.Python:
-		return s.RunCodePython(id)
+		return s.RunCodePython(id, 1*time.Second)
 	case types.C, types.CPP:
 		return nil, errors.New("C/C++ execution not implemented yet")
 	default:
@@ -129,7 +129,7 @@ func (s *sandboxService) RunCode(id int, lang types.ProgrammingLanguage) (*Runti
 	}
 }
 
-func (s *sandboxService) RunCodePython(id int) (*RuntimeResult, error) {
+func (s *sandboxService) RunCodePython(id int, timeout time.Duration) (*RuntimeResult, error) {
 	// Check if inputs directory exists
 	inputsDir := fmt.Sprintf("./tmp/sandbox/%d/inputs", id)
 	if _, err := os.Stat(inputsDir); os.IsNotExist(err) {
@@ -151,7 +151,7 @@ func (s *sandboxService) RunCodePython(id int) (*RuntimeResult, error) {
 	var runtimeOutputs []RuntimeOutput
 	for index, input := range inputFiles {
 		// Execute the Python file in the sandbox directory with timeout
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second) // 5 second timeout
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 
 		cmd := exec.CommandContext(ctx, "python3", "main.py")
