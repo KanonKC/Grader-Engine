@@ -5,13 +5,8 @@ import (
 	"ModelGrader-Grader/types"
 	"encoding/json"
 	"net/http"
+	"time"
 )
-
-type GenerateOutputRequest struct {
-	Code  string   `json:"code"`
-	Lang  string   `json:"lang"`
-	Input []string `json:"input"`
-}
 
 type GraderController interface {
 	GenerateOutput(w http.ResponseWriter, r *http.Request)
@@ -46,7 +41,7 @@ func (gc *graderController) GenerateOutput(w http.ResponseWriter, r *http.Reques
 		lang = types.Python // default to Python
 	}
 
-	res, err := gc.graderSvc.GenerateOutput(req.Code, lang, req.Input)
+	res, err := gc.graderSvc.GenerateOutput(req.Code, lang, req.Input, time.Duration(req.TimeLimitMs)*time.Millisecond)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

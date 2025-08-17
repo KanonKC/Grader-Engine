@@ -18,7 +18,7 @@ type SandboxService interface {
 	MakeBusy(id int) error
 	WriteInput(id int, content string, index int) error
 	WriteCode(id int, lang types.ProgrammingLanguage, content string) error
-	RunCode(id int, lang types.ProgrammingLanguage) (*RuntimeResult, error)
+	RunCode(id int, lang types.ProgrammingLanguage, timeout time.Duration) (*RuntimeResult, error)
 	RunCodePython(id int, timeout time.Duration) (*RuntimeResult, error)
 }
 
@@ -118,7 +118,7 @@ func (s *sandboxService) WriteCode(id int, lang types.ProgrammingLanguage, conte
 	return nil
 }
 
-func (s *sandboxService) RunCode(id int, lang types.ProgrammingLanguage) (*RuntimeResult, error) {
+func (s *sandboxService) RunCode(id int, lang types.ProgrammingLanguage, timeout time.Duration) (*RuntimeResult, error) {
 	switch lang {
 	case types.Python:
 		return s.RunCodePython(id, 1*time.Second)
